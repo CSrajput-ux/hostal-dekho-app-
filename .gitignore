@@ -21,11 +21,29 @@ venv/
 __pycache__/
 *.py[cod]
 
-# Environment and secrets
+# Environment and secrets — NEVER COMMIT THESE
 .env
+.env.*
+!.env.example
 backend/.env
+backend_fastapi/.env
+
+# Firebase / Google secrets
+google-services.json
 *firebase-adminsdk*.json
 serviceAccount*.json
+GoogleService-Info.plist
+
+# Database files — contain real user data
+*.db
+*.sqlite
+*.sqlite3
+backend_fastapi/sql_app.db
+backend_fastapi/test_hosteldekho.db
+
+# Temp / generated files
+file_list.txt
+*.log
 
 # Local crash and heap dumps
 *.hprof
