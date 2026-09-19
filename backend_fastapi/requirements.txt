@@ -1,0 +1,13 @@
+# HostelDekho FastAPI Backend — Pinned Dependencies
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+sqlalchemy==2.0.35
+psycopg2-binary==2.9.9
+python-dotenv==1.0.1
+pydantic==2.9.2
+firebase-admin==6.5.0
+cloudinary==1.41.0
+razorpay==1.4.1
+python-multipart==0.0.12
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
