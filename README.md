@@ -1,4 +1,4 @@
-﻿<div align="center">
+<div align="center">
 
 <img src="logo.png" alt="Hostal Dekho Logo" width="120" height="120" style="border-radius: 24px"/>
 
@@ -483,37 +483,6 @@ Backend will be available at:
 
 # 4. Build & Run
 ./gradlew assembleDebug
-```
-
----
-
-## 🔐 Environment Variables
-
-Create `backend_fastapi/.env`:
-
-```env
-# Security
-SECRET_KEY=your-super-secret-key-min-32-chars
-ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=60
-REFRESH_TOKEN_EXPIRE_DAYS=30
-
-# Database
-DATABASE_URL=sqlite:///./sql_app.db
-
-# Environment
-ENVIRONMENT=development
-DEBUG_MODE=True
-
-# Razorpay (get from razorpay.com/dashboard)
-RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxxxx
-RAZORPAY_KEY_SECRET=your_razorpay_secret
-
-# Firebase (path to service account JSON)
-FIREBASE_CREDENTIALS_PATH=./firebase-adminsdk.json
-
-# CORS (for browser access)
-CORS_ORIGINS=["http://localhost:3000"]
 ```
 
 ---
