@@ -1,0 +1,33 @@
+# Android and Gradle
+.gradle/
+.kotlin/
+.idea/
+.vscode/
+.artifacts/
+build/
+app/build/
+local.properties
+*.iml
+
+# Python backend
+backend/.venv/
+backend_fastapi/.venv/
+backend_fastapi/.pytest_cache/
+backend_fastapi/.ruff_cache/
+backend_fastapi/uploads/
+backend_fastapi/__pycache__/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Environment and secrets
+.env
+backend/.env
+*firebase-adminsdk*.json
+serviceAccount*.json
+
+# Local crash and heap dumps
+*.hprof
+hs_err_pid*
+java_pid*.log

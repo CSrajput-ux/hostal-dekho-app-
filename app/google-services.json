@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "40726329823",
+    "project_id": "hosteldekho-c8eca",
+    "storage_bucket": "hosteldekho-c8eca.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:40726329823:android:e93da63c96fd1d2032ac6a",
+        "android_client_info": {
+          "package_name": "com.company.hostaldekho"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "40726329823-v44sjj7ro1e1qtnv206tljcearmet0b1.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.company.hostaldekho",
+            "certificate_hash": "60cf3cdba64a0be6c1526d226033f9e109dd1b14"
+          }
+        },
+        {
+          "client_id": "40726329823-37m63d5gl6ivaar4i41i8tismaasirhv.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD60U52ZdejgwyCju6PpcxCWhHuR64D_5s"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "40726329823-37m63d5gl6ivaar4i41i8tismaasirhv.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
