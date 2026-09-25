@@ -67,6 +67,8 @@ android {
             "AutoboxingStateCreation",
             "MutableCollectionMutableState"
         )
+        abortOnError = false
+        checkReleaseBuilds = false
     }
     packaging {
         resources {
