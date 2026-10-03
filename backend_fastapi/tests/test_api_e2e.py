@@ -110,3 +110,68 @@ def test_auth_profile_and_public_search(client: TestClient):
     search = client.get("/api/v1/properties/search", params={"location": "Delhi"})
     assert search.status_code == 200
     assert search.json() == {"total": 0, "properties": []}
+
+
+def test_production_health_and_process_time(client: TestClient):
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "healthy"
+    assert data["database"] == "healthy"
+    assert "cache" in data
+    assert "X-Process-Time" in response.headers
+
+
+def test_distributed_otp_flow(client: TestClient):
+    # Test send OTP
+    response = client.post("/api/v1/auth/send-otp", json={"mobile": "9876543210"})
+    assert response.status_code == 200
+    assert "expires_in_seconds" in response.json()
+
+    # Verify invalid OTP fails
+    bad_verify = client.post("/api/v1/auth/verify-otp", json={"mobile": "9876543210", "code": "000000"})
+    assert bad_verify.status_code == 401
+
+    # Verify directly via cache helper
+    from app.core.cache import cache
+    test_code = "123456"
+    cache.store_otp("9999988888", test_code, expire_seconds=300)
+    assert cache.get_otp("9999988888") == test_code
+
+    valid_verify = client.post("/api/v1/auth/verify-otp", json={"mobile": "9999988888", "code": test_code})
+    assert valid_verify.status_code == 200
+    assert "access_token" in valid_verify.json()
+    # Code should be consumed
+    assert cache.get_otp("9999988888") is None
+
+
+def test_nearby_properties_and_caching(client: TestClient):
+    owner = register(client, "nearbyowner", "nearbyowner@example.com", "OWNER")
+    created = client.post("/api/v1/properties/", headers=auth(owner), json={
+        "name": "Connaught Place PG", "address": "CP Inner Circle", "city": "Delhi", "state": "DL",
+        "pincode": "110001", "latitude": 28.6315, "longitude": 77.2167,
+        "type": "PG", "gender": "BOYS",
+        "rooms": [{"room_type": "Single", "price": 12000, "availability_count": 3}],
+    })
+    assert created.status_code == 201
+
+    # Search nearby Connaught Place (within 5000 meters)
+    nearby_res = client.get("/api/v1/properties/nearby", params={
+        "lat": 28.6300,
+        "lng": 77.2150,
+        "radius": 5000,
+    })
+    assert nearby_res.status_code == 200
+    data = nearby_res.json()
+    assert data["total"] >= 1
+    assert data["properties"][0]["name"] == "Connaught Place PG"
+
+    # Second call should hit cache cleanly
+    cached_res = client.get("/api/v1/properties/nearby", params={
+        "lat": 28.6300,
+        "lng": 77.2150,
+        "radius": 5000,
+    })
+    assert cached_res.status_code == 200
+    assert cached_res.json()["total"] == data["total"]
+
