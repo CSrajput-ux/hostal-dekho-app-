@@ -35,6 +35,25 @@ class Settings:
         origin.strip() for origin in os.getenv("CORS_ORIGINS", "").split(",") if origin.strip()
     ]
 
+    # ─────────────────────────────────────────────
+    # Scalability & High-Concurrency (10k Users)
+    # ─────────────────────────────────────────────
+    REDIS_URL: str = os.getenv("REDIS_URL", "")
+    CACHE_TTL_SECONDS: int = int(os.getenv("CACHE_TTL_SECONDS", "180"))  # 3 minutes default
+
+    # Database Connection Pool Settings
+    # QueuePool sized for high concurrent throughput with graceful burst handling
+    DB_POOL_SIZE: int = int(os.getenv("DB_POOL_SIZE", "25"))
+    DB_MAX_OVERFLOW: int = int(os.getenv("DB_MAX_OVERFLOW", "35"))
+    DB_POOL_TIMEOUT: int = int(os.getenv("DB_POOL_TIMEOUT", "30"))
+    DB_POOL_RECYCLE: int = int(os.getenv("DB_POOL_RECYCLE", "1800"))
+    USE_NULLPOOL: bool = os.getenv("USE_NULLPOOL", "false").lower() == "true"
+
+    # Rate Limiting (Anti-abuse & DDoS mitigation)
+    RATE_LIMIT_AUTH: str = os.getenv("RATE_LIMIT_AUTH", "5/minute")
+    RATE_LIMIT_SEARCH: str = os.getenv("RATE_LIMIT_SEARCH", "60/minute")
+    RATE_LIMIT_GENERAL: str = os.getenv("RATE_LIMIT_GENERAL", "200/minute")
+
     def validate(self):
         if not self.JWT_SECRET:
             raise ValueError(
