@@ -9,12 +9,14 @@ Endpoints:
   GET  /{property_id}   — Full property details with rooms
 """
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import text
 from typing import Optional
 from decimal import Decimal
+import math
 from ....api.deps import get_db, get_current_user, require_roles
 from .... import models, schemas
+from ....core.cache import cache
 
 router = APIRouter()
 
@@ -35,59 +37,129 @@ def get_nearby_properties(
     """
     Return properties within `radius` meters of (lat, lng).
     Results are sorted by distance ascending.
+    Cached for high throughput under 10k users concurrency.
     """
-    # Haversine formula — 6371000 = Earth radius in meters
-    query = text("""
-        SELECT p.id, p.name, p.address, p.city, p.latitude, p.longitude,
-               p.type, p.gender, p.verified_badge, p.images, p.rating,
-               (6371000 * acos(
-                   LEAST(1.0, GREATEST(-1.0, cos(radians(:lat)) * cos(radians(latitude)) *
-                   cos(radians(longitude) - radians(:lng)) +
-                   sin(radians(:lat)) * sin(radians(latitude))))
-               )) AS distance_m,
-               (SELECT MIN(price) FROM rooms WHERE property_id = p.id) AS starting_price
-        FROM properties p
-        WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-          AND (p.is_active IS NULL OR p.is_active = TRUE)
-          AND (6371000 * acos(
-                   LEAST(1.0, GREATEST(-1.0, cos(radians(:lat)) * cos(radians(latitude)) *
-                   cos(radians(longitude) - radians(:lng)) +
-                   sin(radians(:lat)) * sin(radians(latitude))))
-               )) <= :radius
-        ORDER BY distance_m ASC
-        LIMIT :limit
-    """)
+    # High-speed cache lookup (rounded to ~110m for hotspot deduplication)
+    cache_key = f"props:nearby:{round(lat, 3)}:{round(lng, 3)}:{int(radius)}:{limit}:{gender}:{type}"
+    cached = cache.get(cache_key)
+    if cached:
+        return schemas.PropertySearchResponse(**cached)
 
-    results = db.execute(
-        query, {"lat": lat, "lng": lng, "radius": radius, "limit": limit}
-    ).fetchall()
+    # Bounding box calculation for B-Tree index acceleration
+    lat_deg_delta = radius / 111000.0
+    cos_lat = math.cos(math.radians(lat))
+    lng_deg_delta = radius / (111000.0 * max(0.01, abs(cos_lat)))
+    min_lat, max_lat = lat - lat_deg_delta, lat + lat_deg_delta
+    min_lng, max_lng = lng - lng_deg_delta, lng + lng_deg_delta
 
     items = []
-    for row in results:
-        # Filter by gender and type in Python if specified (raw SQL already limited by radius)
-        if gender and row.gender and row.gender.upper() != gender.upper():
-            continue
-        if type and row.type and row.type.upper() != type.upper():
-            continue
-        items.append(
-            schemas.PropertySearchItem(
-                id=row.id,
-                name=row.name or "Unnamed Property",
-                address=row.address or "",
-                city=row.city or "",
-                latitude=row.latitude,
-                longitude=row.longitude,
-                type=row.type or "HOSTEL",
-                gender=row.gender or "UNISEX",
-                verified_badge=bool(row.verified_badge),
-                starting_price=row.starting_price,
-                distance_km=round(row.distance_m / 1000, 2) if row.distance_m is not None else None,
-                images=row.images if row.images else [],
-                rating=row.rating,
-            )
-        )
+    try:
+        # Haversine formula using spatial bounding box to utilize latitude/longitude index
+        query = text("""
+            SELECT p.id, p.name, p.address, p.city, p.latitude, p.longitude,
+                   p.type, p.gender, p.verified_badge, p.images, p.rating,
+                   (6371000 * acos(
+                       LEAST(1.0, GREATEST(-1.0, cos(radians(:lat)) * cos(radians(latitude)) *
+                       cos(radians(longitude) - radians(:lng)) +
+                       sin(radians(:lat)) * sin(radians(latitude))))
+                   )) AS distance_m,
+                   (SELECT MIN(price) FROM rooms WHERE property_id = p.id) AS starting_price
+            FROM properties p
+            WHERE latitude BETWEEN :min_lat AND :max_lat
+              AND longitude BETWEEN :min_lng AND :max_lng
+              AND (p.is_active IS NULL OR p.is_active = TRUE)
+              AND (6371000 * acos(
+                       LEAST(1.0, GREATEST(-1.0, cos(radians(:lat)) * cos(radians(latitude)) *
+                       cos(radians(longitude) - radians(:lng)) +
+                       sin(radians(:lat)) * sin(radians(latitude))))
+                   )) <= :radius
+            ORDER BY distance_m ASC
+            LIMIT :limit
+        """)
 
-    return schemas.PropertySearchResponse(total=len(items), properties=items)
+        results = db.execute(
+            query, {
+                "lat": lat, "lng": lng, "radius": radius, "limit": limit,
+                "min_lat": min_lat, "max_lat": max_lat,
+                "min_lng": min_lng, "max_lng": max_lng,
+            }
+        ).fetchall()
+
+        for row in results:
+            if gender and row.gender and row.gender.upper() != gender.upper():
+                continue
+            if type and row.type and row.type.upper() != type.upper():
+                continue
+            items.append(
+                schemas.PropertySearchItem(
+                    id=row.id,
+                    name=row.name or "Unnamed Property",
+                    address=row.address or "",
+                    city=row.city or "",
+                    latitude=row.latitude,
+                    longitude=row.longitude,
+                    type=row.type or "HOSTEL",
+                    gender=row.gender or "UNISEX",
+                    verified_badge=bool(row.verified_badge),
+                    starting_price=row.starting_price,
+                    distance_km=round(row.distance_m / 1000, 2) if row.distance_m is not None else None,
+                    images=row.images if row.images else [],
+                    rating=row.rating,
+                )
+            )
+    except Exception:
+        # Portable Python fallback (used for SQLite test suites lacking radians/acos)
+        candidates = (
+            db.query(models.Property)
+            .options(selectinload(models.Property.rooms))
+            .filter(
+                models.Property.latitude.isnot(None),
+                models.Property.longitude.isnot(None),
+                (models.Property.is_active == True) | (models.Property.is_active == None),
+            )
+            .all()
+        )
+        calculated = []
+        for p in candidates:
+            if gender and p.gender and p.gender.upper() != gender.upper():
+                continue
+            if type and p.type and p.type.upper() != type.upper():
+                continue
+            dlat = math.radians(p.latitude - lat)
+            dlng = math.radians(p.longitude - lng)
+            a = (
+                math.sin(dlat / 2) ** 2
+                + math.cos(math.radians(lat)) * math.cos(math.radians(p.latitude)) * math.sin(dlng / 2) ** 2
+            )
+            c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+            dist_m = 6371000 * c
+            if dist_m <= radius:
+                min_p = min([r.price for r in p.rooms if r.price is not None], default=None) if p.rooms else None
+                calculated.append((dist_m, p, min_p))
+
+        calculated.sort(key=lambda x: x[0])
+        for dist_m, p, min_price in calculated[:limit]:
+            items.append(
+                schemas.PropertySearchItem(
+                    id=p.id,
+                    name=p.name,
+                    address=p.address or "",
+                    city=p.city or "",
+                    latitude=p.latitude,
+                    longitude=p.longitude,
+                    type=p.type or "HOSTEL",
+                    gender=p.gender or "UNISEX",
+                    verified_badge=bool(p.verified_badge),
+                    starting_price=min_price,
+                    distance_km=round(dist_m / 1000.0, 2),
+                    images=p.images if p.images else [],
+                    rating=p.rating,
+                )
+            )
+
+    response = schemas.PropertySearchResponse(total=len(items), properties=items)
+    cache.set(cache_key, response.model_dump(), expire_seconds=120)
+    return response
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -106,8 +178,13 @@ def search_properties(
 ):
     """
     Search properties by city/location text with optional filters.
-    Android calls: GET /properties/search?location=Delhi&gender=BOYS&limit=20
+    Optimized with Redis caching and selectinload to eliminate N+1 DB queries.
     """
+    cache_key = f"props:search:{location}:{type}:{gender}:{min_price}:{max_price}:{limit}:{page}"
+    cached = cache.get(cache_key)
+    if cached:
+        return schemas.PropertySearchResponse(**cached)
+
     query = db.query(models.Property).filter(
         (models.Property.is_active == True) | (models.Property.is_active == None)
     )
@@ -121,7 +198,6 @@ def search_properties(
     if type:
         query = query.filter(models.Property.type.ilike(type))
 
-    # NEW: Gender filter
     if gender:
         query = query.filter(
             (models.Property.gender.ilike(gender)) |
@@ -131,17 +207,16 @@ def search_properties(
 
     total = query.count()
     offset = (page - 1) * limit
-    properties = query.offset(offset).limit(limit).all()
+    # CRITICAL SCALE FIX: Use selectinload to fetch all rooms in 1 query, avoiding N+1 roundtrips
+    properties = query.options(selectinload(models.Property.rooms)).offset(offset).limit(limit).all()
 
     items = []
     for prop in properties:
-        # Get minimum price from rooms
         min_room_price = None
         if prop.rooms:
             prices = [r.price for r in prop.rooms if r.price is not None]
             min_room_price = min(prices) if prices else None
 
-        # Price range filter (applied after getting min_room_price)
         if min_price is not None and min_room_price is not None and float(min_room_price) < min_price:
             continue
         if max_price is not None and min_room_price is not None and float(min_room_price) > max_price:
@@ -165,7 +240,9 @@ def search_properties(
             )
         )
 
-    return schemas.PropertySearchResponse(total=total, properties=items)
+    response = schemas.PropertySearchResponse(total=total, properties=items)
+    cache.set(cache_key, response.model_dump(), expire_seconds=120)
+    return response
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -178,10 +255,11 @@ def get_my_properties(
 ):
     """
     Return all properties owned by the currently authenticated user.
-    Used by OwnerDashboard 'My Listings' section.
+    Uses selectinload to eagerly fetch rooms in a single query.
     """
     properties = (
         db.query(models.Property)
+        .options(selectinload(models.Property.rooms))
         .filter(models.Property.owner_id == current_user.id)
         .order_by(models.Property.created_at.desc())
         .all()
@@ -230,10 +308,8 @@ def create_property(
 ):
     """
     Create a new property listing with optional rooms.
-    Only accessible to authenticated users (any role can list a property).
-    Returns the full property detail response.
+    Invalidates property search caches immediately.
     """
-    # Normalize type to uppercase
     prop_type = request.type.upper() if request.type else "HOSTEL"
     prop_gender = request.gender.upper() if request.gender else "UNISEX"
 
@@ -269,6 +345,9 @@ def create_property(
     except Exception:
         db.rollback()
         raise
+
+    # Invalidate cache so new listing appears in search instantly
+    cache.invalidate_properties_cache(new_property.id)
 
     rooms_response = [
         schemas.RoomBase(
@@ -312,8 +391,18 @@ def get_property_by_id(
     property_id: str,
     db: Session = Depends(get_db),
 ):
-    """Return full details for a single property including rooms."""
-    prop = db.query(models.Property).filter(models.Property.id == property_id).first()
+    """Return full details for a single property with Redis caching."""
+    cache_key = f"props:detail:{property_id}"
+    cached = cache.get(cache_key)
+    if cached:
+        return schemas.PropertyDetailResponse(**cached)
+
+    prop = (
+        db.query(models.Property)
+        .options(selectinload(models.Property.rooms))
+        .filter(models.Property.id == property_id)
+        .first()
+    )
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
 
@@ -328,7 +417,7 @@ def get_property_by_id(
         for r in prop.rooms
     ]
 
-    return schemas.PropertyDetailResponse(
+    response = schemas.PropertyDetailResponse(
         id=prop.id,
         owner_id=prop.owner_id or "",
         name=prop.name,
@@ -349,3 +438,5 @@ def get_property_by_id(
         rooms=rooms,
         created_at=str(prop.created_at),
     )
+    cache.set(cache_key, response.model_dump(), expire_seconds=300)
+    return response

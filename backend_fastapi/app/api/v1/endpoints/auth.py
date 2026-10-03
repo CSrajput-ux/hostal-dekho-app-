@@ -11,46 +11,35 @@ import random
 import time
 import logging
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 from .... import models, schemas
 from ....core.firebase import verify_firebase_token
 from ....core.security import create_access_token, create_refresh_token, get_password_hash, verify_password
 from ....api.deps import get_db, get_current_user
 from ....core.config import settings
+from ....core.cache import cache
+from ....core.rate_limit import limiter
 from jose import jwt, JWTError
 
 logger = logging.getLogger("auth_endpoint")
 router = APIRouter()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# In-memory OTP store: {mobile: {"otp": "123456", "expires_at": timestamp}}
+# Distributed OTP Store (Redis in production, thread-safe memory fallback)
 # ─────────────────────────────────────────────────────────────────────────────
-_otp_store: dict = {}
-
 
 def _generate_otp() -> str:
     return str(random.randint(100000, 999999))
 
 
 def _store_otp(mobile: str, otp: str):
-    _otp_store[mobile] = {
-        "otp": otp,
-        "expires_at": time.time() + settings.OTP_EXPIRE_SECONDS,
-    }
+    cache.store_otp(mobile, otp, settings.OTP_EXPIRE_SECONDS)
 
 
 def _verify_otp_code(mobile: str, code: str) -> bool:
-    entry = _otp_store.get(mobile)
-    if not entry:
-        return False
-    if time.time() > entry["expires_at"]:
-        del _otp_store[mobile]
-        return False
-    if entry["otp"] != code:
-        return False
-    del _otp_store[mobile]
-    return True
+    return cache.verify_and_delete_otp(mobile, code)
+
 
 
 def _build_user_read(user: models.User) -> schemas.UserRead:
@@ -87,12 +76,14 @@ def _build_auth_response(user: models.User) -> schemas.AuthResponse:
 # POST /send-otp
 # ─────────────────────────────────────────────────────────────────────────────
 @router.post("/send-otp", response_model=schemas.SendOtpResponse)
-def send_otp(request: schemas.SendOtpRequest):
+@limiter.limit(settings.RATE_LIMIT_AUTH)
+def send_otp(request: Request, body: schemas.SendOtpRequest):
     """
     Send a 6-digit OTP to the given mobile number.
     In DEBUG_MODE the OTP is returned directly in the response for testing.
+    Rate-limited to prevent SMS abuse.
     """
-    mobile = request.mobile.strip()
+    mobile = body.mobile.strip()
     if len(mobile) != 10 or not mobile.isdigit():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -117,25 +108,26 @@ def send_otp(request: schemas.SendOtpRequest):
 # POST /verify-otp
 # ─────────────────────────────────────────────────────────────────────────────
 @router.post("/verify-otp", response_model=schemas.AuthResponse)
-def verify_otp(request: schemas.VerifyOtpRequest, db: Session = Depends(get_db)):
+@limiter.limit(settings.RATE_LIMIT_AUTH)
+def verify_otp(request: Request, body: schemas.VerifyOtpRequest, db: Session = Depends(get_db)):
     """
     Verify the OTP for the given mobile number.
     Creates a new user if one does not exist.
     Returns access_token + refresh_token on success.
     """
-    if not _verify_otp_code(request.mobile, request.code):
+    if not _verify_otp_code(body.mobile, body.code):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired OTP. Please request a new one.",
         )
 
-    user = db.query(models.User).filter(models.User.mobile == request.mobile).first()
+    user = db.query(models.User).filter(models.User.mobile == body.mobile).first()
     now = datetime.utcnow()
     if not user:
         user = models.User(
-            mobile=request.mobile,
-            name=request.name or "HostelDekho User",
-            email=request.email,
+            mobile=body.mobile,
+            name=body.name or "HostelDekho User",
+            email=body.email,
             role=models.UserRole.STUDENT,
             auth_provider="phone",
             last_login_at=now,
@@ -146,10 +138,10 @@ def verify_otp(request: schemas.VerifyOtpRequest, db: Session = Depends(get_db))
     else:
         user.last_login_at = now
         changed = True
-        if request.name and not user.name:
-            user.name = request.name
-        if request.email and not user.email:
-            user.email = request.email
+        if body.name and not user.name:
+            user.name = body.name
+        if body.email and not user.email:
+            user.email = body.email
         db.commit()
         db.refresh(user)
 
@@ -275,15 +267,16 @@ def firebase_login(request: schemas.GoogleAuthRequest, db: Session = Depends(get
 @router.post("/register", response_model=schemas.AuthResponse)
 @router.post("/signup", response_model=schemas.AuthResponse)
 @router.post("/create-account", response_model=schemas.AuthResponse)
-def register_user(request: schemas.RegisterRequest, db: Session = Depends(get_db)):
+@limiter.limit(settings.RATE_LIMIT_AUTH)
+def register_user(request: Request, body: schemas.RegisterRequest, db: Session = Depends(get_db)):
     """
     Register a new user with username, email, password, and name.
     Supports /register, /signup, and /create-account paths.
     """
     now = datetime.utcnow()
-    clean_username = request.username.strip().lstrip("@").strip() if request.username else None
-    clean_email = request.email.strip().lower() if request.email else None
-    clean_mobile = request.mobile.strip() if request.mobile else None
+    clean_username = body.username.strip().lstrip("@").strip() if body.username else None
+    clean_email = body.email.strip().lower() if body.email else None
+    clean_mobile = body.mobile.strip() if body.mobile else None
 
     if clean_email:
         existing_email = db.query(models.User).filter(models.User.email == clean_email).first()
@@ -309,13 +302,13 @@ def register_user(request: schemas.RegisterRequest, db: Session = Depends(get_db
                 detail="An account with this mobile number already exists.",
             )
 
-    hashed_pw = get_password_hash(request.password) if request.password else None
-    user_name = request.name or request.real_name or clean_username or "HostelDekho User"
+    hashed_pw = get_password_hash(body.password) if body.password else None
+    user_name = body.name or body.real_name or clean_username or "HostelDekho User"
 
     user_role = models.UserRole.STUDENT
-    if request.role:
+    if body.role:
         for role_enum in models.UserRole:
-            if role_enum.value.lower() == request.role.lower():
+            if role_enum.value.lower() == body.role.lower():
                 user_role = role_enum
                 break
 
@@ -343,13 +336,14 @@ def register_user(request: schemas.RegisterRequest, db: Session = Depends(get_db
 @router.post("/login", response_model=schemas.AuthResponse)
 @router.post("/signin", response_model=schemas.AuthResponse)
 @router.post("/token", response_model=schemas.AuthResponse)
-def login_user(request: schemas.LoginRequest, db: Session = Depends(get_db)):
+@limiter.limit(settings.RATE_LIMIT_AUTH)
+def login_user(request: Request, body: schemas.LoginRequest, db: Session = Depends(get_db)):
     """
     Login user using username/email/mobile and password.
     Supports /login, /signin, and /token paths.
     """
     # FIX: Android sends `login_id` as the generic identifier field
-    identifier = (request.username or request.email or request.login_id or "").strip().lstrip("@").strip()
+    identifier = (body.username or body.email or body.login_id or "").strip().lstrip("@").strip()
     if not identifier:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -369,7 +363,7 @@ def login_user(request: schemas.LoginRequest, db: Session = Depends(get_db)):
             detail="Invalid username/email or password.",
         )
 
-    if not verify_password(request.password, user.hashed_password):
+    if not verify_password(body.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username/email or password.",
