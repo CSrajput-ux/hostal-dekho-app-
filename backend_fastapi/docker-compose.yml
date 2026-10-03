@@ -1,0 +1,108 @@
+services:
+  # ─────────────────────────────────────────────────────────────
+  # PostgreSQL 16 (Tuned for 10k users concurrency)
+  # ─────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: hosteldekho_db
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hosteluser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hostelpass123}
+      POSTGRES_DB: ${POSTGRES_DB:-hosteldekho}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    command: >
+      postgres
+        -c max_connections=200
+        -c shared_buffers=256MB
+        -c effective_cache_size=768MB
+        -c maintenance_work_mem=64MB
+        -c checkpoint_completion_target=0.9
+        -c wal_buffers=16MB
+        -c default_statistics_target=100
+        -c random_page_cost=1.1
+        -c effective_io_concurrency=200
+        -c work_mem=16MB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hosteluser} -d ${POSTGRES_DB:-hosteldekho}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hostel_net
+
+  # ─────────────────────────────────────────────────────────────
+  # Redis 7 (Distributed caching, OTP store & rate limiting)
+  # ─────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: hosteldekho_redis
+    restart: always
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --save 60 1 --loglevel notice
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - hostel_net
+
+  # ─────────────────────────────────────────────────────────────
+  # FastAPI Backend (Gunicorn + Uvicorn Multi-Worker)
+  # ─────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hosteldekho_api
+    restart: always
+    environment:
+      ENVIRONMENT: production
+      DEBUG_MODE: "false"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hosteluser}:${POSTGRES_PASSWORD:-hostelpass123}@db:5432/${POSTGRES_DB:-hosteldekho}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-please-change-to-a-secure-random-32-char-string-in-production}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,https://app.hosteldekho.com}
+      WEB_CONCURRENCY: 4
+      DB_POOL_SIZE: 25
+      DB_MAX_OVERFLOW: 35
+      CACHE_TTL_SECONDS: 180
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - hostel_net
+
+  # ─────────────────────────────────────────────────────────────
+  # Nginx Reverse Proxy (Gzip, Rate Limiting & SSL Ready)
+  # ─────────────────────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: hosteldekho_nginx
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+    networks:
+      - hostel_net
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  hostel_net:
+    driver: bridge
