@@ -24,6 +24,9 @@ def clean_database():
     Base.metadata.drop_all(bind=engine)
 
 
+from app.core.rate_limit import limiter
+
+
 @pytest.fixture()
 def client(monkeypatch):
     monkeypatch.setattr(
@@ -31,8 +34,10 @@ def client(monkeypatch):
         "create_razorpay_order",
         lambda amount: {"id": f"order_test_{amount}"},
     )
+    limiter.enabled = False
     with TestClient(app) as test_client:
         yield test_client
+    limiter.enabled = True
 
 
 def register(client: TestClient, username: str, email: str, role: str):
@@ -174,4 +179,87 @@ def test_nearby_properties_and_caching(client: TestClient):
     })
     assert cached_res.status_code == 200
     assert cached_res.json()["total"] == data["total"]
+
+
+def test_wishlist_support_kyc_and_bank_endpoints(client: TestClient):
+    student = register(client, "student_tester", "student_tester@example.com", "STUDENT")
+    owner = register(client, "owner_tester", "owner_tester@example.com", "OWNER")
+    student_headers = auth(student)
+    owner_headers = auth(owner)
+
+    # 1. Create property
+    prop_res = client.post("/api/v1/properties/", headers=owner_headers, json={
+        "name": "Luxury Girls Hostel",
+        "address": "South Ex Part 1",
+        "city": "Delhi",
+        "state": "DL",
+        "pincode": "110049",
+        "type": "HOSTEL",
+        "gender": "GIRLS",
+        "rooms": [{"room_type": "Single", "price": 15000, "availability_count": 5}],
+    })
+    assert prop_res.status_code == 201
+    property_id = prop_res.json()["id"]
+
+    # 2. Wishlist endpoints
+    add_wl = client.post(f"/api/v1/wishlists/{property_id}", headers=student_headers)
+    assert add_wl.status_code == 200
+    assert add_wl.json()["property_id"] == property_id
+
+    # Get my wishlist
+    my_wl = client.get("/api/v1/wishlists/my", headers=student_headers)
+    assert my_wl.status_code == 200
+    wl_items = my_wl.json()
+    assert len(wl_items) == 1
+    assert wl_items[0]["name"] == "Luxury Girls Hostel"
+    assert float(wl_items[0]["starting_price"]) == 15000.0
+
+    # Remove from wishlist
+    del_wl = client.delete(f"/api/v1/wishlists/{property_id}", headers=student_headers)
+    assert del_wl.status_code == 204
+    my_wl_after = client.get("/api/v1/wishlists/my", headers=student_headers)
+    assert len(my_wl_after.json()) == 0
+
+    # 3. Support endpoints
+    ticket_res = client.post("/api/v1/support/", headers=student_headers, json={
+        "subject": "Wifi not working",
+        "description": "Room 102 wifi router disconnected",
+    })
+    assert ticket_res.status_code == 200
+    assert ticket_res.json()["status"] == "OPEN"
+
+    my_tickets = client.get("/api/v1/support/my", headers=student_headers)
+    assert my_tickets.status_code == 200
+    assert len(my_tickets.json()) == 1
+
+    # 4. KYC upload endpoint
+    kyc_res = client.post("/api/v1/kyc/", headers=student_headers, json={
+        "document_type": "AADHAAR",
+        "document_url": "https://example.com/docs/aadhaar.pdf",
+    })
+    assert kyc_res.status_code == 200
+    assert kyc_res.json()["status"] == "PENDING"
+
+    # 5. Bank account endpoints (owner only)
+    bank_res = client.post("/api/v1/bank/", headers=owner_headers, json={
+        "account_holder_name": "Hostel Owner",
+        "account_number": "123456789012",
+        "ifsc_code": "HDFC0001234",
+        "bank_name": "HDFC Bank",
+        "is_primary": True,
+    })
+    assert bank_res.status_code == 200
+    assert bank_res.json()["bank_name"] == "HDFC Bank"
+
+    my_banks = client.get("/api/v1/bank/my", headers=owner_headers)
+    assert my_banks.status_code == 200
+    assert len(my_banks.json()) == 1
+
+    # 6. Owner stats endpoint
+    stats_res = client.get("/api/v1/owner/stats", headers=owner_headers)
+    assert stats_res.status_code == 200
+    stats = stats_res.json()
+    assert stats["total_properties"] == 1
+    assert stats["active_properties"] == 1
+
 

@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional, Any
+from pydantic import BaseModel, ConfigDict, Field
+from typing import List, Optional, Any, Union
+from datetime import datetime
 from decimal import Decimal
 
 
@@ -33,6 +34,8 @@ class RefreshRequest(BaseModel):
 
 
 class RegisterRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     username: Optional[str] = None
     name: Optional[str] = None
     real_name: Optional[str] = None
@@ -42,21 +45,19 @@ class RegisterRequest(BaseModel):
     confirm_password: Optional[str] = None
     role: Optional[str] = "STUDENT"
 
-    class Config:
-        extra = "allow"
-
 
 class LoginRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     username: Optional[str] = None
     email: Optional[str] = None
     login_id: Optional[str] = None   # Android sends this field as generic identifier
     password: str
 
-    class Config:
-        extra = "allow"
-
 
 class UserRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     firebase_uid: Optional[str] = None
     username: Optional[str] = None
@@ -67,34 +68,28 @@ class UserRead(BaseModel):
     profile_image: Optional[str] = None
     auth_provider: Optional[str] = None
     kyc_status: str
-    created_at: str
-    last_login_at: Optional[str] = None
-
-    class Config:
-        from_attributes = True
+    created_at: Union[datetime, str]
+    last_login_at: Optional[Union[datetime, str]] = None
 
 
 class UserUpdate(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     name: Optional[str] = None
     email: Optional[str] = None
     mobile: Optional[str] = None
     profile_image: Optional[str] = None
 
-    class Config:
-        extra = "allow"
-
 
 class AuthResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
     # FIX: Use snake_case field names directly — Android uses @SerializedName("access_token")
     # Removed serialization_alias which was causing camelCase output confusing the client
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
     user: UserRead
-
-    class Config:
-        from_attributes = True
-        populate_by_name = True
 
 
 # ─────────────────────────────────────────────
@@ -174,7 +169,7 @@ class PropertyDetailResponse(BaseModel):
     rating: Optional[float] = None     # NEW
     is_active: bool = True             # NEW
     rooms: List[RoomBase] = []
-    created_at: str
+    created_at: Optional[Union[datetime, str]] = None
 
 
 class OwnerPropertyItem(BaseModel):
@@ -191,7 +186,7 @@ class OwnerPropertyItem(BaseModel):
     starting_price: Optional[Decimal] = None
     images: List[str] = []
     rating: Optional[float] = None
-    created_at: str
+    created_at: Optional[Union[datetime, str]] = None
 
 
 class OwnerPropertyListResponse(BaseModel):
@@ -228,7 +223,7 @@ class MyBookingItem(BaseModel):
     amount_paid: Optional[Decimal] = None
     check_in_date: Optional[str] = None
     duration_months: Optional[int] = None
-    created_at: str
+    created_at: Optional[Union[datetime, str]] = None
 
 
 class MyBookingsResponse(BaseModel):
@@ -247,7 +242,7 @@ class OwnerBookingItem(BaseModel):
     amount_paid: Optional[Decimal] = None
     check_in_date: Optional[str] = None
     duration_months: Optional[int] = None
-    created_at: str
+    created_at: Optional[Union[datetime, str]] = None
 
 
 class OwnerBookingsResponse(BaseModel):
@@ -299,14 +294,13 @@ class KycDocumentCreate(BaseModel):
 
 
 class KycDocumentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     document_type: str
     document_url: str
     status: str
-    uploaded_at: str
-
-    class Config:
-        from_attributes = True
+    uploaded_at: Optional[Union[datetime, str]] = None
 
 
 # ─────────────────────────────────────────────
@@ -319,15 +313,14 @@ class SupportTicketCreate(BaseModel):
 
 
 class SupportTicketResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     subject: str
     description: str
     status: str
-    created_at: str
-    updated_at: str
-
-    class Config:
-        from_attributes = True
+    created_at: Optional[Union[datetime, str]] = None
+    updated_at: Optional[Union[datetime, str]] = None
 
 
 # ─────────────────────────────────────────────
@@ -343,16 +336,15 @@ class BankAccountCreate(BaseModel):
 
 
 class BankAccountResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     account_holder_name: str
     account_number: str
     ifsc_code: str
     bank_name: str
     is_primary: bool
-    created_at: str
-
-    class Config:
-        from_attributes = True
+    created_at: Optional[Union[datetime, str]] = None
 
 
 # ─────────────────────────────────────────────
@@ -360,10 +352,9 @@ class BankAccountResponse(BaseModel):
 # ─────────────────────────────────────────────
 
 class WishlistResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     user_id: str
     property_id: str
-    created_at: str
-
-    class Config:
-        from_attributes = True
+    created_at: Optional[Union[datetime, str]] = None
 
