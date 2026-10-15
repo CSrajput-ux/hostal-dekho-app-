@@ -10,7 +10,7 @@ Endpoints:
 import random
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 from .... import models, schemas
@@ -122,7 +122,7 @@ def verify_otp(request: Request, body: schemas.VerifyOtpRequest, db: Session = D
         )
 
     user = db.query(models.User).filter(models.User.mobile == body.mobile).first()
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     if not user:
         user = models.User(
             mobile=body.mobile,
@@ -206,7 +206,7 @@ def firebase_login(request: schemas.GoogleAuthRequest, db: Session = Depends(get
 
     logger.info(f"Verified Firebase Auth Token: UID={uid}, email={email}, provider={firebase_auth_provider}")
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     user = None
 
     # 1. Search by firebase_uid
@@ -273,7 +273,7 @@ def register_user(request: Request, body: schemas.RegisterRequest, db: Session =
     Register a new user with username, email, password, and name.
     Supports /register, /signup, and /create-account paths.
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     clean_username = body.username.strip().lstrip("@").strip() if body.username else None
     clean_email = body.email.strip().lower() if body.email else None
     clean_mobile = body.mobile.strip() if body.mobile else None
@@ -369,7 +369,7 @@ def login_user(request: Request, body: schemas.LoginRequest, db: Session = Depen
             detail="Invalid username/email or password.",
         )
 
-    user.last_login_at = datetime.utcnow()
+    user.last_login_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
     db.refresh(user)
     logger.info(f"User logged in via Password: ID={user.id}, Username={user.username}")
