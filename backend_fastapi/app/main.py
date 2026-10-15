@@ -184,7 +184,7 @@ def get_owner_stats(
     total_properties, active_properties, total_bookings, active_bookings,
     total_earnings, monthly_earnings.
     """
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
     # Get owner's properties
     all_properties = db.query(models.Property).filter(
@@ -222,12 +222,12 @@ def get_owner_stats(
     )
 
     # Monthly earnings (current month)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     monthly_earnings = sum(
         (b.amount_paid or Decimal("0")) for b in all_bookings
         if b.status in [models.BookingStatus.ACTIVE, models.BookingStatus.COMPLETED]
-        and b.created_at and b.created_at >= month_start
+        and b.created_at and (b.created_at.replace(tzinfo=None) if hasattr(b.created_at, 'tzinfo') and b.created_at.tzinfo else b.created_at) >= month_start
     )
 
     return schemas.OwnerStatsResponse(
