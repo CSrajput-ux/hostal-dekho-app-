@@ -44,6 +44,8 @@ COPY --chown=appuser:appgroup app /app/app
 COPY --chown=appuser:appgroup alembic /app/alembic
 COPY --chown=appuser:appgroup alembic.ini /app/alembic.ini
 COPY --chown=appuser:appgroup gunicorn_conf.py /app/gunicorn_conf.py
+COPY --chown=appuser:appgroup entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 # Switch to unprivileged user
 USER appuser
@@ -58,6 +60,8 @@ EXPOSE 8000
 # Docker healthcheck querying deep health endpoint
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8000/api/health || exit 1
+
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Launch production server with multi-worker Gunicorn + Uvicorn
 CMD ["gunicorn", "app.main:app", "-c", "gunicorn_conf.py"]
