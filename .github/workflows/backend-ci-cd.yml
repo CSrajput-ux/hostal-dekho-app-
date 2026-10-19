@@ -1,0 +1,73 @@
+name: Backend CI / CD Pipeline
+
+on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'backend_fastapi/**'
+      - '.github/workflows/backend-ci-cd.yml'
+  pull_request:
+    branches: [ master, main ]
+    paths:
+      - 'backend_fastapi/**'
+
+jobs:
+  test-and-lint:
+    name: Run Pytest & Schema Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        working-directory: backend_fastapi
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run Pytest Suite
+        working-directory: backend_fastapi
+        run: |
+          pytest -v
+
+      - name: Verify Alembic Migrations Head
+        working-directory: backend_fastapi
+        run: |
+          alembic heads
+
+  docker-build:
+    name: Build & Verify Docker Image
+    needs: test-and-lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: actions/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend_fastapi
+          file: ./backend_fastapi/Dockerfile
+          push: false
+          tags: hosteldekho-backend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trigger Render Deploy (Optional)
+        if: github.ref == 'refs/heads/master' && env.RENDER_DEPLOY_HOOK != ''
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          curl -X POST "$RENDER_DEPLOY_HOOK"

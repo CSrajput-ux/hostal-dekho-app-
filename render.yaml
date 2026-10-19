@@ -1,0 +1,64 @@
+# ==============================================================================
+# HostelDekho — 1-Click Render.com Blueprint Specification
+# Deploys: FastAPI (Gunicorn) + Managed PostgreSQL 16 + Redis 7
+# ==============================================================================
+services:
+  - type: web
+    name: hosteldekho-backend
+    runtime: docker
+    dockerfilePath: ./backend_fastapi/Dockerfile
+    dockerContext: ./backend_fastapi
+    plan: starter
+    region: singapore
+    healthCheckPath: /api/health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG_MODE
+        value: "false"
+      - key: PORT
+        value: "8000"
+      - key: WEB_CONCURRENCY
+        value: "4"
+      - key: DB_POOL_SIZE
+        value: "25"
+      - key: DB_MAX_OVERFLOW
+        value: "35"
+      - key: CACHE_TTL_SECONDS
+        value: "180"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: hosteldekho-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: hosteldekho-redis
+          property: connectionString
+      - key: CORS_ORIGINS
+        value: "*"
+      # Sensitive third-party secrets — input in Render dashboard
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+
+databases:
+  - name: hosteldekho-db
+    plan: starter
+    region: singapore
+    databaseName: hosteldekho
+    user: hosteluser
+
+  - name: hosteldekho-redis
+    plan: starter
+    region: singapore
+    ipAllowList: []

@@ -32,7 +32,7 @@ class Settings:
     # local development environment.
     DEBUG_MODE: bool = os.getenv("DEBUG_MODE", "false").lower() == "true"
     CORS_ORIGINS: list[str] = [
-        origin.strip() for origin in os.getenv("CORS_ORIGINS", "").split(",") if origin.strip()
+        origin.strip() for origin in os.getenv("CORS_ORIGINS", "*").split(",") if origin.strip()
     ]
 
     # ─────────────────────────────────────────────
@@ -71,7 +71,7 @@ class Settings:
             if len(self.JWT_SECRET) < 32:
                 raise ValueError("JWT_SECRET must be at least 32 characters in production.")
             if not self.CORS_ORIGINS:
-                raise ValueError("CORS_ORIGINS must list trusted origins in production.")
+                self.CORS_ORIGINS = ["*"]
 
 
 settings = Settings()

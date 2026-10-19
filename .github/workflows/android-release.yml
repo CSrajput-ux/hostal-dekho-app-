@@ -1,0 +1,53 @@
+name: Android Release Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      prod_api_url:
+        description: 'Production API Base URL'
+        required: false
+        default: 'https://api.hosteldekho.com/api/v1/'
+
+jobs:
+  build-release:
+    name: Build Release APK & Bundle (AAB)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Grant Execute Permission for Gradlew
+        run: chmod +x gradlew
+
+      - name: Build Release APK and App Bundle
+        env:
+          PROD_API_BASE_URL: ${{ github.event.inputs.prod_api_url || 'https://api.hosteldekho.com/api/v1/' }}
+          RELEASE_KEYSTORE_PATH: ${{ secrets.RELEASE_KEYSTORE_PATH }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          ./gradlew app:bundleRelease app:assembleRelease --stacktrace
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosteldekho-release-apk
+          path: app/build/outputs/apk/release/*.apk
+
+      - name: Upload Release App Bundle (AAB for Play Store)
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosteldekho-release-aab
+          path: app/build/outputs/bundle/release/*.aab
