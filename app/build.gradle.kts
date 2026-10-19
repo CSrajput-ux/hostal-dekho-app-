@@ -31,15 +31,48 @@ android {
         buildConfigField("String", "RAZORPAY_KEY_ID", "\"rzp_test_YOUR_KEY_HERE\"")
     }
 
+    signingConfigs {
+        create("release") {
+            val keystorePath = providers.environmentVariable("RELEASE_KEYSTORE_PATH")
+                .orElse(providers.gradleProperty("RELEASE_KEYSTORE_PATH").orElse(""))
+                .get()
+            if (keystorePath.isNotEmpty() && file(keystorePath).exists()) {
+                storeFile = file(keystorePath)
+                storePassword = providers.environmentVariable("RELEASE_KEYSTORE_PASSWORD")
+                    .orElse(providers.gradleProperty("RELEASE_KEYSTORE_PASSWORD").orElse("")).get()
+                keyAlias = providers.environmentVariable("RELEASE_KEY_ALIAS")
+                    .orElse(providers.gradleProperty("RELEASE_KEY_ALIAS").orElse("")).get()
+                keyPassword = providers.environmentVariable("RELEASE_KEY_PASSWORD")
+                    .orElse(providers.gradleProperty("RELEASE_KEY_PASSWORD").orElse("")).get()
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            // This deliberately cannot reach a real service. Set
-            // PROD_API_BASE_URL in local/CI Gradle properties for each release.
-            val productionApiUrl = providers.gradleProperty("PROD_API_BASE_URL")
-                .orElse("https://api.hosteldekho.invalid/api/v1/")
+            // Read PROD_API_BASE_URL from environment variable, Gradle property (-PPROD_API_BASE_URL=...),
+            // or fallback to the production default.
+            val productionApiUrl = providers.environmentVariable("PROD_API_BASE_URL")
+                .orElse(providers.gradleProperty("PROD_API_BASE_URL").orElse("https://api.hosteldekho.com/api/v1/"))
                 .get()
             buildConfigField("String", "BASE_URL", "\"$productionApiUrl\"")
+
+            val razorpayKey = providers.environmentVariable("RAZORPAY_KEY_ID")
+                .orElse(providers.gradleProperty("RAZORPAY_KEY_ID").orElse("rzp_test_YOUR_KEY_HERE"))
+                .get()
+            buildConfigField("String", "RAZORPAY_KEY_ID", "\"$razorpayKey\"")
+
+            val webClientId = providers.environmentVariable("WEB_CLIENT_ID")
+                .orElse(providers.gradleProperty("WEB_CLIENT_ID").orElse("40726329823-37m63d5gl6ivaar4i41i8tismaasirhv.apps.googleusercontent.com"))
+                .get()
+            buildConfigField("String", "WEB_CLIENT_ID", "\"$webClientId\"")
+
+            val releaseConfig = signingConfigs.getByName("release")
+            if (releaseConfig.storeFile != null && releaseConfig.storeFile!!.exists()) {
+                signingConfig = releaseConfig
+            }
+
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
